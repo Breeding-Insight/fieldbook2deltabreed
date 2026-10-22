@@ -9,13 +9,6 @@ library(bslib)
 library(shinycssloaders)
 library(shinyjs)
 
-required_packages <- c("shiny", "shinydashboard", "shinyFiles", "DT", "tools", "readxl", "openxlsx", "data.table", "bslib", "shinycssloaders", "shinyjs")
-
-install_if_missing <- function(packages) {
-  new_packages <- packages[!(packages %in% installed.packages()[, "Package"])]
-  if (length(new_packages)) install.packages(new_packages)
-}
-
 ui <- page_fluid(
   useShinyjs(),
   theme = bs_theme(

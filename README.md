@@ -22,15 +22,22 @@ git clone https://github.com/Breeding-Insight/fieldbook2deltabreed.git
 cd fieldbook2deltabreed
 ```
 
-In R, install the dependencies listed in `DESCRIPTION`, then start the app:
+In R, start the app from the repository root:
 
 ```r
-deps <- trimws(strsplit(read.dcf("DESCRIPTION")[1, "Imports"], ",")[[1]])
-missing <- setdiff(deps, rownames(installed.packages()))
-if (length(missing)) install.packages(missing)
-
-shiny::runApp()
+source("run.R")
 ```
+
+Or run `Rscript run.R` from a terminal. The launcher automatically installs missing
+packages listed in `DESCRIPTION`, including Shiny, before starting the app.
+Existing packages are kept. Installation needs internet access and a writable R
+library; if the default library is not writable, the app uses `R_LIBS_USER`.
+Your configured package repositories are used, with `https://cloud.r-project.org`
+as the default CRAN mirror when none has been selected.
+
+Once Shiny is installed, RStudio's **Run App** button or `shiny::runApp()` also
+checks and installs missing dependencies through `global.R` before loading the UI
+and server. Installation progress and failures appear in the R console.
 
 ## Convert an export
 
@@ -111,6 +118,8 @@ with the column headers, without a title row.
 | `server.r` | Conversion functions, optional BrAPI lookup, and Shiny server logic. |
 | `ui.r` | Upload controls, level-name input, status messages, and table layout. |
 | `DESCRIPTION` | App metadata and R dependencies. |
+| `global.R` | Startup check and automatic installation of missing dependencies. |
+| `run.R` | Launcher that bootstraps dependencies, including Shiny. |
 | `www/` | Static app assets. |
 | `data/` | Gitignored local reference inputs; not distributed with the repository. |
 
