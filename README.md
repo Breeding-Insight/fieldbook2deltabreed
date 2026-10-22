@@ -48,7 +48,6 @@ and server. Installation progress and failures appear in the R console.
 3. Review the status messages and the detected unit levels, listed from top to
    bottom. Set **Most-defined unit level** to the deepest level in your export,
    for example, set to `Plant` for a `Plot > Plant` hierarchy or `Entry` for a single level.
-   Confirm the name even when the app supplies a default.
 4. Review the identifier and trait columns in the table. Blank template columns
    are hidden in the preview and included in the export.
 5. Use **CSV**, **Excel**, or **Copy** above the table. Clear any table search
