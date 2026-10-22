@@ -50,7 +50,8 @@ and server. Installation progress and failures appear in the R console.
    such as `Plant` for a `Plot > Plant` hierarchy or `Tank` for a single tank level.
    Confirm the name even when the app supplies a default.
 4. Review the identifier and trait columns in the table. Blank template columns
-   are hidden in the preview and included in the export.
+   are hidden in the preview and included in the export. Template columns filled
+   from DeltaBreed are shown for review.
 5. Use **CSV**, **Excel**, or **Copy** above the table. Clear any table search
    before exporting the complete dataset.
 6. Append the result to the corresponding DeltaBreed experiment and unit level.
@@ -63,17 +64,34 @@ area; a table may still contain the successfully processed files, so check the
 status before downloading. Combined files are concatenated without deduplication.
 Use **Clear All Files** to start a new batch.
 
-### Optional: retrieve the level name from DeltaBreed
+### Optional: connect to DeltaBreed
 
 Enter the program's **BrAPI Base URL** and an access token from DeltaBreed's BrAPI
-tab. If both are supplied before upload, the app looks up the deepest unit level
-automatically. After upload, use **Get level name from DeltaBreed** to run the lookup.
+tab. If both are supplied before upload, the app connects automatically. After
+upload, use **Get details from DeltaBreed** to connect. A connection does two things:
 
-The lookup uses one unit from the deepest level and compares its immediate parent
-with the Field Book export. It does not validate every unit or perform an import.
-On lookup failure, the app reports a warning and uses the typed level name.
-The token is sent in the Authorization header, rather than the URL. This feature
-has been checked with mocked responses; live DeltaBreed behavior remains unverified.
+1. **Level name.** The app looks up one unit from the deepest level, fills
+   **Most-defined unit level** with its DeltaBreed level, and compares its immediate
+   parent with the Field Book export. On failure, the app reports a warning, uses
+   the typed level name, and skips step 2.
+2. **Template columns.** The app reads every observation unit in the program, with
+   its experiment, environment, and season, and fills the template columns that a
+   DeltaBreed experiment export fills: germplasm, GID, test or check, experiment
+   title, description and type, unit levels and unit IDs, environment, location,
+   year, replicate, block, row, column, and treatment factors. Rows on a sub-unit
+   take germplasm, replicate, block, row, and column from their top-level unit when
+   DeltaBreed does not record them on the sub-unit.
+
+A unit that DeltaBreed does not list, or lists under a different parent, keeps
+blank template columns; the status reports how many and gives an example. Rows
+below the first sub-level leave `Sub-Obs Unit` and `Sub Unit ID` blank. If the
+unit details cannot be fetched, the status reports a warning and the template
+columns stay blank. Large programs take longer, because the whole program is read.
+
+The token is sent in the Authorization header, rather than the URL, and is not
+stored. Both steps have been checked with mocked responses only. Live DeltaBreed
+behavior, and whether DeltaBreed accepts filled template columns on append, remain
+unverified. To produce blank template columns instead, leave the URL or token empty.
 
 ## Input and output
 
@@ -85,15 +103,16 @@ The output contains, in order:
 
 | Columns | Behavior |
 | --- | --- |
-| DeltaBreed template columns | Always present and blank, including `Row`, `Column`, and `RTK`. Single-level exports use 20 template columns; nested exports use 22, adding `Sub-Obs Unit` and `Sub Unit ID`. |
+| DeltaBreed template columns | Always present, including `Row`, `Column`, and `RTK`. Blank unless DeltaBreed is connected; then filled from DeltaBreed, except `Lat`, `Long`, `Elevation`, and `RTK`. Single-level exports use 20 template columns; nested exports use 22, adding `Sub-Obs Unit` and `Sub Unit ID`. |
 | `<Level> ObsUnitID` | One identifier column per level, ordered from parent to child, such as `Plot ObsUnitID` followed by `Plant ObsUnitID`. Ancestor IDs repeat on descendant rows. |
 | Trait columns | One column per trait, populated with the observed values. |
 | `TS:<trait>` | Included when timestamps are available. Three-digit milliseconds are removed and spaces are replaced with `T`. |
 
-Only unit identifiers, traits, and timestamps are populated. Source metadata such
-as germplasm, coordinates, and RTK values is not copied into the blank template
-columns. This layout assumes DeltaBreed fills experiment metadata during append;
-that behavior still needs confirmation with the current outputs.
+Without a DeltaBreed connection, only unit identifiers, traits, and timestamps are
+populated. Field Book metadata such as germplasm, coordinates, and RTK values is
+never copied into the template columns. The blank layout assumes DeltaBreed fills
+experiment metadata during append; that behavior still needs confirmation with
+the current outputs.
 
 Each observed unit produces one row; an ancestor referenced by a child does not
 gain a separate row unless it has observations of its own. Excel exports start
@@ -109,13 +128,14 @@ with the column headers, without a title row.
 | Unit-level order cannot be determined | Review the displayed hierarchy. Levels with indistinguishable counts retain their input column order. |
 | Blank or duplicate level name | Enter a nonempty deepest-level name that differs from all ancestor level names. |
 | Trait name clashes with template columns | Check trait names against the DeltaBreed template headers and resolve the naming conflict before conversion. |
+| Units not found in DeltaBreed, or under a different parent | Check that the BrAPI Base URL is for the program the Field Book file came from, and that the experiment in DeltaBreed matches the one loaded into Field Book. Those rows keep blank template columns. |
 | DeltaBreed rejects an exported file | Check the unit-level names and target experiment, and retain the input, output, and exact import error when reporting the issue. Local conversion success does not establish import compatibility. |
 
 ## Development and validation
 
 | Path | Purpose |
 | --- | --- |
-| `server.r` | Conversion functions, optional BrAPI lookup, and Shiny server logic. |
+| `server.r` | Conversion functions, optional BrAPI lookup and template backfill, and Shiny server logic. |
 | `ui.r` | Upload controls, level-name input, status messages, and table layout. |
 | `DESCRIPTION` | App metadata and R dependencies. |
 | `global.R` | Startup check and automatic installation of missing dependencies. |

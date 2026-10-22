@@ -91,7 +91,7 @@ ui <- page_fluid(
       h5("DeltaBreed (optional)"),
       textInput("db_url", "BrAPI Base URL (DeltaBreed > BrAPI tab)", placeholder = "https://app.breedinginsight.net/v1/programs/..."),
       passwordInput("db_token", "Access token (valid 24 hours)"),
-      actionButton("db_lookup", "Get level name from DeltaBreed", icon = icon("cloud-arrow-down")),
+      actionButton("db_lookup", "Get details from DeltaBreed", icon = icon("cloud-arrow-down")),
       uiOutput("db_status"),
       br(),
       textInput("deep_level", "Most-defined unit level (filled from DeltaBreed, or type it)", value = "Plant"),
