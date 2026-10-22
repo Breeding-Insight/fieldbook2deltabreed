@@ -17,4 +17,5 @@ Imports:
     data.table,
     bslib,
     shinycssloaders,
-    shinyjs
+    shinyjs,
+    httr2
