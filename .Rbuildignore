@@ -1,2 +1,17 @@
 ^.*\.Rproj$
 ^\.Rproj\.user$
+^ui\.r$
+^server\.r$
+^global\.R$
+^run\.R$
+^scratch\.R$
+^www$
+^rsconnect$
+^manifest\.json$
+^data$
+^output$
+^CLAUDE\.md$
+^AGENTS\.md$
+^GEMINI\.md$
+^\.DS_Store$
+^\.Rhistory$

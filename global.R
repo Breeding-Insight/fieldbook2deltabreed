@@ -1,6 +1,9 @@
-# Shiny sources this before ui.r and server.r. Keep DESCRIPTION as the dependency list.
+# Shiny sources this before ui.r and server.r. Keep DESCRIPTION as the dependency list:
+# Imports for the conversion functions, Suggests for the app (testthat is only for the tests).
 local({
-  packages <- trimws(strsplit(read.dcf("DESCRIPTION")[1, "Imports"], ",")[[1]])
+  fields <- read.dcf("DESCRIPTION", fields = c("Imports", "Suggests"))[1, ]
+  packages <- sub("\\s*\\(.*\\)$", "", trimws(unlist(strsplit(fields, ","))))
+  packages <- setdiff(packages, "testthat")
   missing_packages <- function() {
     packages[!vapply(packages, requireNamespace, logical(1), quietly = TRUE)]
   }
