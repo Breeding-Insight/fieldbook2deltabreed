@@ -459,17 +459,14 @@ server <- function(input, output, session) { # nolint
   }) %>%
     bindEvent(input$files)
 
-  # Name the ObsUnitID columns from the unit levels; renaming never re-runs the conversion
+  # Name the ObsUnitID columns by depth (Top level, then Sub-level); renaming never re-runs the conversion
   output$table <- DT::renderDT({
     req(rv$data)
-    level_names <- rv$level_names
-    level_names[is.na(level_names)] <- trimws(input$deep_level)
-    validate(
-      need(all(level_names != ""), "Type the name of the most-defined unit level in the sidebar."),
-      need(!anyDuplicated(level_names), paste("Each unit level needs a different name:", paste(level_names, collapse = " > ")))
-    )
+    n_levels <- length(rv$level_names)
+    level_labels <- if (n_levels <= 2) c("Top level", "Sub-level")[seq_len(n_levels)] else
+      c("Top level", paste("Sub-level", seq_len(n_levels - 1)))
     export_data <- copy(rv$data)
-    setnames(export_data, paste0(".id", seq_along(level_names)), paste(level_names, "ObsUnitID"))
+    setnames(export_data, paste0(".id", seq_len(n_levels)), paste(level_labels, "ObsUnitID"))
 
     # Hide the blank template columns in the UI; export includes all columns
     hide_targets <- 0:(match(".id1", names(rv$data)) - 2)
@@ -501,11 +498,12 @@ server <- function(input, output, session) { # nolint
     output$feedback_ui <- renderUI({
       tags$div(class = "alert alert-info", "All files cleared. Please upload new files.")
     })
-    output$fileList <- renderUI({
-      tags$div(em("No files uploaded yet"))
-    })
 
     # Hide the export indicator
     shinyjs::runjs("var el = document.getElementById('export-indicator'); if (el) { el.style.display = 'none'; }")
+
+    # Empty the file picker's name box and hide its "Upload complete" bar
+    shinyjs::reset("files")
+    shinyjs::runjs("var bar = document.getElementById('files_progress'); if (bar) { bar.style.visibility = 'hidden'; }")
   })
 }
