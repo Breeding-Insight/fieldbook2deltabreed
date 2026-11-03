@@ -144,12 +144,12 @@ process_single_file <- function(file) {
     fb$TS <- gsub(" ", "T", fb$TS)
     # Pivot the data.table wider with both value and TS
     fbWide <- dcast(fb, ObservationUnitDbId ~ trait, value.var = c("value", "TS"))
-    setnames(fbWide, gsub("value_", "", names(fbWide)))
-    setnames(fbWide, gsub("TS_", "TS:", names(fbWide)))
+    # dcast prefixes each column with its value.var; rename TS_ first so a trait named "TS_..." keeps its name
+    setnames(fbWide, sub("^TS_", "TS:", names(fbWide)))
+    setnames(fbWide, sub("^value_", "", names(fbWide)))
   } else {
-    # Pivot the data.table wider with just value
+    # Pivot the data.table wider with just value; dcast names these columns by trait alone
     fbWide <- dcast(fb, ObservationUnitDbId ~ trait, value.var = "value")
-    setnames(fbWide, gsub("value_", "", names(fbWide)))
   }
 
   template_cols <- if (n_levels > 1) sub_template_cols else top_template_cols
@@ -169,71 +169,54 @@ process_single_file <- function(file) {
     message = paste("Successfully processed", file$name))
 }
 
-# Describe unit levels top to bottom; NA is the typed most-defined level
-describe_levels <- function(level_names, typed = "(typed level)") {
-  level_names[is.na(level_names)] <- typed
+# Describe unit levels top to bottom; NA is the unnamed most-defined level
+describe_levels <- function(level_names, deepest = "(deepest level)") {
+  level_names[is.na(level_names)] <- deepest
   paste(level_names, collapse = " > ")
 }
 
-# DeltaBreed's BrAPI returns level names in lower case (e.g. "plant"); headers use "Plant"
-capitalize_level <- function(x) paste0(toupper(substr(x, 1, 1)), substring(x, 2))
+# A cell holds an observation unless it is NA or empty text
+present <- function(v) if (is.character(v)) !is.na(v) & v != "" else !is.na(v)
 
-# Ask DeltaBreed's BrAPI which level a unit belongs to, and which units it sits inside.
-# base_url is the BrAPI Base URL from DeltaBreed's BrAPI tab; the token only goes in the Authorization header
-deltabreed_unit_level <- function(base_url, token, obs_unit_id) {
-  brapi <- paste0(sub("/brapi/v2$", "", sub("/+$", "", trimws(base_url))), "/brapi/v2")
-  send <- function(req) {
-    resp <- tryCatch(
-      req |>
-        httr2::req_auth_bearer_token(token) |>
-        httr2::req_timeout(15) |>
-        httr2::req_error(is_error = function(resp) FALSE) |>
-        httr2::req_perform(),
-      error = function(e) stop("Could not reach DeltaBreed: ", gsub(token, "<token>", conditionMessage(e), fixed = TRUE), call. = FALSE)
-    )
-    if (httr2::resp_status(resp) == 401) {
-      stop("DeltaBreed rejected the access token (it may have expired). Generate a new one on DeltaBreed's BrAPI tab.", call. = FALSE)
-    }
-    resp
-  }
-  body <- function(resp) tryCatch(httr2::resp_body_json(resp)$result, error = function(e) NULL)
-  not_found <- paste0("Unit ", obs_unit_id, " was not found in this DeltaBreed program. Check that the BrAPI Base URL is for the program this Field Book file came from.")
-
-  # BrAPI v2 offers GET /observationunits/{id}; fall back to the ?observationUnitDbId= filter
-  resp <- send(httr2::request(brapi) |> httr2::req_url_path_append("observationunits", obs_unit_id))
-  unit <- if (httr2::resp_status(resp) == 200) body(resp) else NULL
-  if (is.null(unit$observationUnitDbId)) {
-    resp <- send(httr2::request(brapi) |> httr2::req_url_path_append("observationunits") |>
-      httr2::req_url_query(observationUnitDbId = obs_unit_id))
-    # DeltaBreed v1.3 answers 500 instead of an empty list when nothing matches (noted in deltabreedquery)
-    if (httr2::resp_status(resp) %in% c(404, 500)) stop(not_found, call. = FALSE)
-    if (httr2::resp_status(resp) != 200) {
-      stop("DeltaBreed returned status ", httr2::resp_status(resp), " for observation units.", call. = FALSE)
-    }
-    result <- body(resp)
-    if (is.null(result)) stop("DeltaBreed did not return BrAPI data. Check the BrAPI Base URL.", call. = FALSE)
-    matches <- Filter(function(u) identical(u$observationUnitDbId, obs_unit_id), result$data)
-    if (length(matches) == 0) stop(not_found, call. = FALSE)
-    unit <- matches[[1]]
+# Combine processed files that share unit levels. A unit found in several files becomes one row; any parent
+# or trait that those files fill with different values is returned as a conflict instead
+combine_files <- function(processed_files, level_names) {
+  combined <- rbindlist(lapply(processed_files, function(x) data.table(.file = x$name, x$data)), fill = TRUE)
+  id_cols <- grep("^\\.id[0-9]+$", names(combined), value = TRUE)
+  # A row's own unit is its deepest filled ID
+  combined[, .unit := do.call(fcoalesce, rev(.SD)), .SDcols = id_cols]
+  shared <- combined[, uniqueN(.file), by = .unit][V1 > 1, .unit]
+  if (length(shared) == 0) {
+    return(list(data = combined[, !c(".file", ".unit")], conflicts = character(0), merged = 0L))
   }
 
-  level_name <- unit$observationUnitPosition$observationLevel$levelName
-  if (is.null(level_name) || level_name == "") {
-    stop("DeltaBreed did not report a level for unit ", obs_unit_id, ".", call. = FALSE)
-  }
-  # Relationships hold rep, block and the units this one sits inside (possibly the unit itself)
-  relationships <- Filter(function(r) !is.null(r$observationUnitDbId) && !tolower(r$levelName) %in% c("rep", "block"),
-    unit$observationUnitPosition$observationLevelRelationships)
-  parents <- setNames(parent_id(vapply(relationships, function(r) r$observationUnitDbId, "")),
-    vapply(relationships, function(r) r$levelName, ""))
-  list(level_name = level_name, level_order = unit$observationUnitPosition$observationLevel$levelOrder,
-    parents = parents[parents != obs_unit_id])
+  rows <- combined[.unit %in% shared]
+  # Timestamps may differ for the same value; the earliest is kept below
+  compare_cols <- setdiff(names(rows), c(".file", ".unit", grep("^TS:", names(rows), value = TRUE)))
+  conflicts <- unlist(lapply(compare_cols, function(col) {
+    found <- rows[present(get(col)), .(n = uniqueN(get(col)), detail = paste0(get(col), " in ", .file, collapse = ", ")),
+      by = .unit][n > 1]
+    if (nrow(found) == 0) return(NULL)
+    label <- if (col %in% id_cols) {
+      level <- level_names[match(col, id_cols)]
+      paste(if (is.na(level)) "deepest level" else level, "ObsUnitID")
+    } else col
+    paste0("Unit ", found$.unit, " has different values for '", label, "': ", found$detail)
+  }))
+  if (length(conflicts) > 0) return(list(data = NULL, conflicts = conflicts, merged = 0L))
+
+  # Each column takes the unit's one observed value; a timestamp takes the earliest
+  pick <- function(v, col) if (startsWith(col, "TS:")) sort(v[present(v)])[1] else v[present(v)][1]
+  merged <- rows[, Map(pick, .SD, names(.SD)), by = .unit, .SDcols = setdiff(names(rows), c(".file", ".unit"))]
+  data <- rbind(combined[!.unit %in% shared], merged, use.names = TRUE, fill = TRUE)
+  data[, c(".file", ".unit") := NULL]
+  setorderv(data, id_cols, na.last = FALSE)
+  list(data = data, conflicts = character(0), merged = length(shared))
 }
 
 server <- function(input, output, session) { # nolint
 
-  rv <- reactiveValues(data = NULL, level_names = NULL, export_filename = NULL, uploaded_files = list(),
-    db_level = NULL, db_message = NULL)
+  rv <- reactiveValues(data = NULL, level_names = NULL, export_filename = NULL, uploaded_files = list())
 
   # Main content output - shows empty state or table
   output$main_content <- renderUI({
@@ -266,76 +249,9 @@ server <- function(input, output, session) { # nolint
     }
   })
 
-  # Unit levels found in the upload, with the typed most-defined level
-  output$levels_ui <- renderUI({
-    req(!is.null(rv$level_names))
-    tags$div(class = "alert alert-secondary",
-      paste("Unit levels, top to bottom:", describe_levels(rv$level_names, trimws(input$deep_level)))
-    )
-  })
-
   # Styled feedback as Bootstrap alerts
   output$feedback_ui <- renderUI({
     tags$div(class = "alert alert-info", "Please upload one or more Fieldbook output '_database' files in .csv or .txt format.")
-  })
-
-  # Outcome of the optional DeltaBreed level-name lookup
-  output$db_status <- renderUI({
-    req(rv$db_message)
-    tags$div(class = rv$db_message$class, rv$db_message$text)
-  })
-
-  # A text input counts as filled only when it has non-blank text
-  filled <- function(x) !is.null(x) && nzchar(trimws(x))
-
-  # Ask DeltaBreed for the most-defined level's name, using one unit at that level from the upload
-  lookup_deep_level <- function() {
-    if (!filled(input$db_url) || !filled(input$db_token)) {
-      rv$db_message <- list(class = "alert alert-warning", text = "Enter the BrAPI Base URL and an access token from DeltaBreed's BrAPI tab first.")
-      return(invisible())
-    }
-    n <- length(rv$level_names)
-    id_col <- paste0(".id", n)
-    row <- rv$data[!is.na(rv$data[[id_col]])][1]
-    result <- withProgress(message = "Asking DeltaBreed for the level name...", {
-      tryCatch(deltabreed_unit_level(trimws(input$db_url), trimws(input$db_token), row[[id_col]]), error = function(e) e)
-    })
-    if (inherits(result, "error")) {
-      rv$db_level <- NULL
-      rv$db_message <- list(class = "alert alert-warning",
-        text = paste("DeltaBreed lookup failed:", conditionMessage(result), "The typed level name is used instead."))
-      return(invisible())
-    }
-
-    level_name <- capitalize_level(result$level_name)
-    notes <- character(0)
-    if (is.na(rv$level_names[n])) {
-      updateTextInput(session, "deep_level", value = level_name)
-    } else if (!identical(tolower(rv$level_names[n]), tolower(level_name))) {
-      # A single-level file already named its level with an empty column (e.g. Tank); keep it, but say so
-      notes <- c(notes, paste0("Field Book calls this level '", rv$level_names[n], "', DeltaBreed calls it '", level_name, "'; Field Book's name was kept."))
-    }
-    # Field Book's parent for this unit should be one DeltaBreed lists, under the same level name
-    if (n > 1) {
-      fb_parent <- row[[paste0(".id", n - 1)]]
-      db_parent_level <- names(result$parents)[result$parents == fb_parent]
-      if (length(db_parent_level) == 0) {
-        notes <- c(notes, paste0("DeltaBreed does not list ", fb_parent, " as a parent of ", row[[id_col]], "; check the experiment."))
-      } else if (!tolower(rv$level_names[n - 1]) %in% tolower(db_parent_level)) {
-        notes <- c(notes, paste0("Field Book calls the parent level '", rv$level_names[n - 1], "', DeltaBreed calls it '", capitalize_level(db_parent_level[1]), "'."))
-      }
-    }
-    rv$db_level <- level_name
-    rv$db_message <- list(class = if (length(notes) > 0) "alert alert-warning" else "alert alert-success",
-      text = paste(c(paste0("Level name from DeltaBreed: ", level_name, "."), notes), collapse = " "))
-  }
-
-  observeEvent(input$db_lookup, {
-    if (is.null(rv$data)) {
-      rv$db_message <- list(class = "alert alert-info", text = "Upload a Field Book file first.")
-    } else {
-      lookup_deep_level()
-    }
   })
 
   observe({
@@ -365,8 +281,6 @@ server <- function(input, output, session) { # nolint
       }
 
       all_files <- do.call(rbind, rv$uploaded_files)
-      rv$db_level <- NULL
-      rv$db_message <- NULL
       processed_files <- list()
       success_count <- 0
       error_messages <- c()
@@ -391,24 +305,37 @@ server <- function(input, output, session) { # nolint
         success_count <- 0
       }
 
+      # A unit in several files is merged into one row, unless the files disagree about it
       if (success_count > 0) {
+        combined <- combine_files(processed_files, level_sets[[1]])
+        if (length(combined$conflicts) > 0) {
+          shown <- head(combined$conflicts, 10)
+          more <- if (length(combined$conflicts) > 10) paste0("; and ", length(combined$conflicts) - 10, " more") else ""
+          error_messages <- c(error_messages, paste0("These files give the same unit different values and cannot be combined - ",
+            paste(shown, collapse = "; "), more, ". Fix the files and upload again."))
+          success_count <- 0
+        }
+      }
+
+      if (success_count > 0) {
+        merged_note <- if (combined$merged > 0) paste0(" ", combined$merged, " unit(s) appeared in more than one file and were merged.") else ""
         tied <- unique(unlist(lapply(processed_files, function(x) x$tied)))
-        tied_note <- if (length(tied) > 0) paste0(" Note: the order of ", paste(tied, collapse = ", "), " could not be told apart from the data, so Field Book's column order was kept. Check the unit levels below.") else ""
+        tied_note <- if (length(tied) > 0) paste0(" Note: the order of ", paste(tied, collapse = ", "), " could not be told apart from the data, so Field Book's column order was kept: ", describe_levels(level_sets[[1]]), ".") else ""
         if (length(error_messages) > 0) {
           output$feedback_ui <- renderUI({
             tags$div(class = "alert alert-warning",
-              paste0("Successfully processed ", success_count, " file(s). Errors: ", paste(error_messages, collapse = "; "), tied_note)
+              paste0("Successfully processed ", success_count, " file(s). Errors: ", paste(error_messages, collapse = "; "), merged_note, tied_note)
             )
           })
         } else {
           output$feedback_ui <- renderUI({
             tags$div(class = if (nzchar(tied_note)) "alert alert-warning" else "alert alert-success",
-              paste0("Successfully processed all ", success_count, " file(s).", tied_note)
+              paste0("Successfully processed all ", success_count, " file(s).", merged_note, tied_note)
             )
           })
         }
 
-        combined_data <- rbindlist(lapply(processed_files, function(x) x$data), fill = TRUE)
+        combined_data <- combined$data
 
         # Generate export filename based on uploaded files
         generate_export_filename <- function(files) {
@@ -429,20 +356,10 @@ server <- function(input, output, session) { # nolint
         rv$export_filename <- generate_export_filename(all_files)
         rv$level_names <- level_sets[[1]]
 
-        # Suggest a name for the most-defined level unless the user already typed one
-        if (anyNA(rv$level_names) && trimws(input$deep_level) %in% c("", "Plant", "Plot")) {
-          deep_default <- if (length(rv$level_names) > 1) "Plant" else "Plot"
-          if (deep_default %in% rv$level_names) deep_default <- ""
-          updateTextInput(session, "deep_level", value = deep_default)
-        }
-
         # Show the export indicator
         shinyjs::runjs("var el = document.getElementById('export-indicator'); if (el) { el.style.display = 'block'; }")
 
         rv$data <- combined_data
-
-        # Name the most-defined level from DeltaBreed when the user gave a URL and token
-        if (filled(input$db_url) && filled(input$db_token)) lookup_deep_level()
       } else {
         output$feedback_ui <- renderUI({
           tags$div(class = "alert alert-danger",
@@ -472,14 +389,23 @@ server <- function(input, output, session) { # nolint
     hide_targets <- 0:(match(".id1", names(rv$data)) - 2)
     export_cols <- 0:(ncol(export_data) - 1)
 
+    # Exports keep only the rows matching the search box, so ask before exporting a filtered table
+    confirm_export <- function(button) DT::JS(paste0(
+      "function(e, dt, node, config) {",
+      "  var search = dt.search();",
+      "  if (search && !confirm('A search is applied: only the ' + dt.rows({search: \"applied\"}).count() + ' of ' + dt.rows().count() +",
+      "    ' rows matching \"' + search + '\" will be exported. Proceed?')) return;",
+      "  $.fn.dataTable.ext.buttons.", button, ".action.call(this, e, dt, node, config);",
+      "}"))
+
     DT::datatable(export_data, options = list(
       scrollX = TRUE,
       pageLength = 25,
       dom = "Bfrtip",
       buttons = list(
-        list(extend = "copy", text = "Copy", title = NULL, exportOptions = list(columns = export_cols, modifier = list(page = "all"))),
-        list(extend = "csv", text = "CSV", filename = rv$export_filename, exportOptions = list(columns = export_cols, modifier = list(page = "all"))),
-        list(extend = "excel", text = "Excel", filename = rv$export_filename, title = NULL, exportOptions = list(columns = export_cols, modifier = list(page = "all")))
+        list(extend = "copy", text = "Copy", title = NULL, action = confirm_export("copyHtml5"), exportOptions = list(columns = export_cols, modifier = list(page = "all"))),
+        list(extend = "csv", text = "CSV", filename = rv$export_filename, action = confirm_export("csvHtml5"), exportOptions = list(columns = export_cols, modifier = list(page = "all"))),
+        list(extend = "excel", text = "Excel", filename = rv$export_filename, title = NULL, action = confirm_export("excelHtml5"), exportOptions = list(columns = export_cols, modifier = list(page = "all")))
       ),
       ordering = TRUE,
       columnDefs = list(
@@ -493,8 +419,6 @@ server <- function(input, output, session) { # nolint
     rv$uploaded_files <- list()
     rv$data <- NULL
     rv$level_names <- NULL
-    rv$db_level <- NULL
-    rv$db_message <- NULL
     output$feedback_ui <- renderUI({
       tags$div(class = "alert alert-info", "All files cleared. Please upload new files.")
     })

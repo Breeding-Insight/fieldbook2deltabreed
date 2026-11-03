@@ -88,17 +88,6 @@ ui <- page_fluid(
       h5("Uploaded Files"),
       uiOutput("fileList"),
       br(),
-      # Hidden for now; the server still reads deep_level, so keep these inputs in the page
-      hidden(div(id = "db_fields",
-        h5("DeltaBreed (optional)"),
-        textInput("db_url", "BrAPI Base URL (DeltaBreed > BrAPI tab)", placeholder = "https://app.breedinginsight.net/v1/programs/..."),
-        passwordInput("db_token", "Access token (valid 24 hours)"),
-        actionButton("db_lookup", "Get level name from DeltaBreed", icon = icon("cloud-arrow-down")),
-        uiOutput("db_status"),
-        br(),
-        textInput("deep_level", "Most-defined unit level (filled from DeltaBreed, or type it)", value = "Plant")
-      )),
-      hidden(uiOutput("levels_ui")),
       actionButton("clearFiles", label = "Clear All Files", icon = icon("trash"), class = "btn btn-danger"),
       br(), br(),
       
