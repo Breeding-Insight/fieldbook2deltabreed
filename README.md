@@ -6,8 +6,8 @@ observations into one row per observed unit, retains parent identifiers for nest
 units, and provides CSV, Excel, and clipboard exports.
 
 The current code targets DeltaBreed v1.3 template layouts. Conversion has run
-locally on real Field Book exports; successful imports of the current outputs into
-DeltaBreed have not yet been confirmed.
+locally on real Field Book exports, and output files from the current version
+have been imported into DeltaBreed successfully.
 
 ## Run locally
 
@@ -84,8 +84,8 @@ The output contains, in order:
 
 Only unit identifiers, traits, and timestamps are populated. Source metadata such
 as germplasm, coordinates, and RTK values is not copied into the blank template
-columns. This layout assumes DeltaBreed fills experiment metadata during append;
-that behavior still needs confirmation with the current outputs.
+columns. DeltaBreed accepts these columns blank when the file is appended to an
+existing experiment, as successful imports of the current outputs have confirmed.
 
 Each observed unit produces one row; an ancestor referenced by a child does not
 gain a separate row unless it has observations of its own. Excel exports start
