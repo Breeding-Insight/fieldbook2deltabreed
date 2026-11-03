@@ -5,10 +5,9 @@ appending trait observations to existing DeltaBreed experiments. It reshapes
 observations into one row per observed unit, retains parent identifiers for nested
 units, and provides CSV, Excel, and clipboard exports.
 
-The current code targets DeltaBreed v1.3 template layouts. Conversion and mocked
-BrAPI checks have run locally; successful imports of the current outputs into
-DeltaBreed have not yet been confirmed. Import validation is tracked in
-[GitHub issue #5](https://github.com/Breeding-Insight/fieldbook2deltabreed/issues/5).
+The current code targets DeltaBreed v1.3 template layouts. Conversion has run
+locally on real Field Book exports, and output files from the current version
+have been imported into DeltaBreed successfully.
 
 ## Run locally
 
@@ -45,34 +44,28 @@ and server. Installation progress and failures appear in the R console.
    than table format (`_table`).
 2. Upload one or more `.csv`, `.txt`, `.xls`, or `.xlsx` files. The app accepts up
    to 10 files per session.
-3. Review the status messages and the detected unit levels, listed from top to
-   bottom. Set **Most-defined unit level** to the deepest level in your export,
-   for example, set to `Plant` for a `Plot > Plant` hierarchy or `Entry` for a single level.
+3. Review the status messages.
 4. Review the identifier and trait columns in the table. Blank template columns
    are hidden in the preview and included in the export.
-5. Use **CSV**, **Excel**, or **Copy** above the table. Clear any table search
-   before exporting the complete dataset.
+5. Use **CSV**, **Excel**, or **Copy** above the table. If the table search box
+   holds text, the app warns that only the matching rows will be exported and
+   asks whether to proceed.
 6. Append the result to the corresponding DeltaBreed experiment and unit level.
    Confirm the import result and observation counts in DeltaBreed.
 
-Files with matching detected unit-level names are combined into one table;
-different trait sets are allowed and missing cells are left empty. Files with
-different hierarchies cannot be combined. Failed files are reported in the status
-area; a table may still contain the successfully processed files, so check the
-status before downloading. Combined files are concatenated without deduplication.
-Use **Clear All Files** to start a new batch.
+Files with the same unit levels are combined into one table; different trait sets
+are allowed and missing cells are left empty. Files with different hierarchies
+cannot be combined. Failed files are reported in the status area; a table may
+still contain the successfully processed files, so check the status before
+downloading. Use **Clear All Files** to start a new batch.
 
-### Optional: retrieve the level name from DeltaBreed
-
-Enter the program's **BrAPI Base URL** and an access token from DeltaBreed's BrAPI
-tab. If both are supplied before upload, the app looks up the deepest unit level
-automatically. After upload, use **Get level name from DeltaBreed** to run the lookup.
-
-The lookup uses one unit from the deepest level and compares its immediate parent
-with the Field Book export. It does not validate every unit or perform an import.
-On lookup failure, the app reports a warning and uses the typed level name.
-The token is sent in the Authorization header, rather than the URL. This feature
-has been checked with mocked responses; live DeltaBreed behavior remains unverified.
+A unit that appears in more than one file, such as a plot measured in two Field
+Book sessions, becomes one row that takes its traits from every file; when the
+files give the same value, the earliest timestamp is kept. The status reports how
+many units were merged. If the files give a unit different values for the same
+trait, or different parent units, the batch is refused and each conflict is
+listed with its unit ID, trait, files, and values. Blank cells never conflict, and
+`0` counts as a value.
 
 ## Input and output
 
@@ -85,14 +78,14 @@ The output contains, in order:
 | Columns | Behavior |
 | --- | --- |
 | DeltaBreed template columns | Always present and blank, including `Row`, `Column`, and `RTK`. Single-level exports use 20 template columns; nested exports use 22, adding `Sub-Obs Unit` and `Sub Unit ID`. |
-| `<Level> ObsUnitID` | One identifier column per level, ordered from parent to child, such as `Plot ObsUnitID` followed by `Plant ObsUnitID`. Ancestor IDs repeat on descendant rows. |
-| Trait columns | One column per trait, populated with the observed values. |
+| `Top level ObsUnitID`, `Sub-level ObsUnitID` | One identifier column per level, ordered from parent to child. Deeper hierarchies number the sub-levels (`Sub-level 1 ObsUnitID`, `Sub-level 2 ObsUnitID`). Ancestor IDs repeat on descendant rows. |
+| Trait columns | One column per trait, named exactly as the trait, populated with the observed values. |
 | `TS:<trait>` | Included when timestamps are available. Three-digit milliseconds are removed and spaces are replaced with `T`. |
 
 Only unit identifiers, traits, and timestamps are populated. Source metadata such
 as germplasm, coordinates, and RTK values is not copied into the blank template
-columns. This layout assumes DeltaBreed fills experiment metadata during append;
-that behavior still needs confirmation with the current outputs.
+columns. DeltaBreed accepts these columns blank when the file is appended to an
+existing experiment, as successful imports of the current outputs have confirmed.
 
 Each observed unit produces one row; an ancestor referenced by a child does not
 gain a separate row unless it has observations of its own. Excel exports start
@@ -105,17 +98,18 @@ with the column headers, without a title row.
 | Incorrect table format or missing required columns | Use a Field Book `_database` export and check for `ObservationUnitDbId`, `trait`, and `value`. |
 | Repeated observations | Each unit–trait pair must occur only once within a file. Repeated measures are rejected instead of aggregated; resolve them before conversion. |
 | Missing identifier or inconsistent nesting | Every observation needs an ID, and each nested unit must belong to exactly one parent at each ancestor level. |
-| Unit-level order cannot be determined | Review the displayed hierarchy. Levels with indistinguishable counts retain their input column order. |
-| Blank or duplicate level name | Enter a nonempty deepest-level name that differs from all ancestor level names. |
+| Unit-level order cannot be determined | Review the order listed in the status message. Levels with indistinguishable counts retain their input column order. |
+| Files give the same unit different values | Resolve the listed conflicts in the source files. A categorical trait exported as its label in one session (`Neutral`) and as its code in another (`3`) counts as a conflict; export every session with the same setting. |
+| Files have different unit levels | Files combine only when their level columns match, including an empty level-name column (such as `Plot`) present in one export but not another. |
 | Trait name clashes with template columns | Check trait names against the DeltaBreed template headers and resolve the naming conflict before conversion. |
-| DeltaBreed rejects an exported file | Check the unit-level names and target experiment, and retain the input, output, and exact import error when reporting the issue. Local conversion success does not establish import compatibility. |
+| DeltaBreed rejects an exported file | Check the ObsUnitID headers and target experiment, and retain the input, output, and exact import error when reporting the issue. Local conversion success does not establish import compatibility. |
 
 ## Development and validation
 
 | Path | Purpose |
 | --- | --- |
-| `server.r` | Conversion functions, optional BrAPI lookup, and Shiny server logic. |
-| `ui.r` | Upload controls, level-name input, status messages, and table layout. |
+| `server.r` | Conversion and file-merging functions, and Shiny server logic. |
+| `ui.r` | Upload controls, status messages, and table layout. |
 | `DESCRIPTION` | App metadata and R dependencies. |
 | `global.R` | Startup check and automatic installation of missing dependencies. |
 | `run.R` | Launcher that bootstraps dependencies, including Shiny. |
